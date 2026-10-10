@@ -1492,6 +1492,22 @@ static spv::Function *make_frag_finalize_function(spv::Builder &b, const SpirvSh
     if (!is_float_data_type(color_val_operand.type))
         color = utils::convert_to_float(b, utils, color, color_val_operand.type, true);
 
+    // Single-channel surfaces with the A (== G) swizzle store the shader's alpha (or green)
+    // component. The host surface only has a red channel, so move that component to .x.
+    {
+        const SceGxmColorFormat color_format = translate_state.hints->color_format;
+        const SceGxmColorBaseFormat color_base = gxm::get_base_format(color_format);
+        const bool one_component = color_base == SCE_GXM_COLOR_BASE_FORMAT_U8 || color_base == SCE_GXM_COLOR_BASE_FORMAT_S8
+            || color_base == SCE_GXM_COLOR_BASE_FORMAT_U16 || color_base == SCE_GXM_COLOR_BASE_FORMAT_S16
+            || color_base == SCE_GXM_COLOR_BASE_FORMAT_F16 || color_base == SCE_GXM_COLOR_BASE_FORMAT_F32;
+        if (!program.is_native_color() && one_component && (color_format & SCE_GXM_COLOR_SWIZZLE_MASK) == SCE_GXM_COLOR_SWIZZLE1_A) {
+            // U8/S8 use the A swizzle name, the 16/32-bit formats call the same value G
+            const unsigned src = (color_base == SCE_GXM_COLOR_BASE_FORMAT_U8 || color_base == SCE_GXM_COLOR_BASE_FORMAT_S8) ? 3U : 1U;
+            const spv::Id v4 = b.makeVectorType(b.makeFloatType(32), 4);
+            color = b.createOp(spv::OpVectorShuffle, v4, { { true, color }, { true, color }, { false, src }, { false, 1 }, { false, 2 }, { false, 3 } });
+        }
+    }
+
     if (program.is_frag_color_used() && features.should_use_shader_interlock()) {
         spv::Id signed_i32 = b.makeIntType(32);
         spv::Id coord_id = b.createLoad(translate_state.frag_coord_id, spv::NoPrecision);

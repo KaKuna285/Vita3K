@@ -286,6 +286,9 @@ namespace color {
 static vk::ComponentMapping translate_swizzle1(SceGxmColorSwizzle1Mode mode) {
     switch (mode) {
     case SCE_GXM_COLOR_SWIZZLE1_R:
+    // SWIZZLE1_G and SWIZZLE1_A share the same value. Single-channel surfaces are always
+    // stored in the red channel on the host, the shader routes the right component there.
+    case SCE_GXM_COLOR_SWIZZLE1_G:
         return swizzle_r001;
     default:
         LOG_ERROR("Unknown swizzle mode {}", log_hex(mode));
