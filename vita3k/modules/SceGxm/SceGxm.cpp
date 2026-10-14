@@ -2678,16 +2678,29 @@ EXPORT(int, sceGxmExecuteCommandList, SceGxmContext *context, SceGxmCommandList 
     if (!commandList || !commandList->list)
         return RET_ERROR(SCE_GXM_ERROR_INVALID_POINTER);
 
-    // Emit a jump to the first command of given command list
-    // Link the deferred commands into the immediate context currently recording this scene.
-    renderer::CommandList &imm_cmds = context->renderer->command_list;
+    // Copy the deferred commands into the immediate context's command list.
+    // The deferred list must NOT be linked in directly (its last->next would be rewritten every time it
+    // is executed, redirecting older submitted chains), nor referenced by the renderer later: a command
+    // list is freed as soon as the game overwrites its memory, which can happen before the renderer
+    // thread has caught up. At this point the game guarantees the list is valid, so take a copy that the
+    // immediate context owns and frees like any other command.
+    renderer::Context *imm_ctx = context->renderer.get();
+    renderer::CommandList &imm_cmds = imm_ctx->command_list;
+    for (renderer::Command *src = commandList->list->first; src; src = src->next) {
+        renderer::Command *copy = imm_ctx->alloc_func();
+        copy->opcode = src->opcode;
+        copy->status = src->status;
+        std::memcpy(copy->data, src->data, sizeof(copy->data));
+        copy->next = nullptr;
 
-    if (imm_cmds.last) {
-        imm_cmds.last->next = commandList->list->first;
-        imm_cmds.last = commandList->list->last;
-    } else {
-        imm_cmds.first = commandList->list->first;
-        imm_cmds.last = commandList->list->last;
+        if (imm_cmds.last)
+            imm_cmds.last->next = copy;
+        else
+            imm_cmds.first = copy;
+        imm_cmds.last = copy;
+
+        if (src == commandList->list->last)
+            break;
     }
 
     // Restore back our GXM state
