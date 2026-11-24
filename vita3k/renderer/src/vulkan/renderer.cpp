@@ -22,6 +22,7 @@
 
 #include <renderer/functions.h>
 #include <renderer/types.h>
+#include <renderer/vulkan/crash_diag.h>
 #include <renderer/vulkan/functions.h>
 #include <renderer/vulkan/state.h>
 
@@ -588,6 +589,15 @@ bool VKState::create(std::unique_ptr<renderer::State> &state, const Config &conf
         }
 
         physical_device_properties = physical_device.getProperties();
+        {
+            // DEBUG BUILD ONLY: identify the driver (NVIDIA and Mesa encode the version differently)
+            const uint32_t v = physical_device_properties.driverVersion;
+            LOG_INFO("[crash_diag] GPU: {}, vendor 0x{:04X}, driver version raw 0x{:08X} (NVIDIA style {}.{}, Mesa style {}.{}.{}), Vulkan {}.{}.{}",
+                physical_device_properties.deviceName.data(), physical_device_properties.vendorID, v,
+                (v >> 22) & 0x3FF, (v >> 14) & 0xFF,
+                VK_VERSION_MAJOR(v), VK_VERSION_MINOR(v), VK_VERSION_PATCH(v),
+                VK_VERSION_MAJOR(physical_device_properties.apiVersion), VK_VERSION_MINOR(physical_device_properties.apiVersion), VK_VERSION_PATCH(physical_device_properties.apiVersion));
+        }
         physical_device_features = physical_device.getFeatures();
         physical_device_memory = physical_device.getMemoryProperties();
         physical_device_queue_families = physical_device.getQueueFamilyProperties();
@@ -700,6 +710,8 @@ bool VKState::create(std::unique_ptr<renderer::State> &state, const Config &conf
 #endif
             // used for coherent framebuffer fetch
             { VK_EXT_RASTERIZATION_ORDER_ATTACHMENT_ACCESS_EXTENSION_NAME, &support_rasterized_order_access },
+            // DEBUG BUILD ONLY: GPU-side position on device lost
+            { VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME, &crash_diag::use_checkpoints },
 #ifdef __ANDROID__
             // dependencies of VK_ANDROID_external_memory_android_hardware_buffer
             { VK_KHR_BIND_MEMORY_2_EXTENSION_NAME, &temp_bool },
@@ -868,6 +880,9 @@ bool VKState::create(std::unique_ptr<renderer::State> &state, const Config &conf
     // Get Queues
     general_queue = device.getQueue(general_family_index, 0);
     transfer_queue = device.getQueue(transfer_family_index, 0);
+
+    // DEBUG BUILD ONLY
+    crash_diag::install(general_queue, crash_diag::use_checkpoints);
 
     // Create Command Pools
     {

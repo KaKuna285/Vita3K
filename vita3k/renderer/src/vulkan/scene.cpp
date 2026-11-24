@@ -18,6 +18,7 @@
 #include <renderer/vulkan/functions.h>
 
 #include <gxm/functions.h>
+#include <renderer/vulkan/crash_diag.h>
 #include <renderer/vulkan/gxm_to_vulkan.h>
 
 #include <config/state.h>
@@ -582,6 +583,26 @@ void draw(VKContext &context, SceGxmPrimitiveType type, SceGxmIndexFormat format
 
     // bind the vertex streams
     bind_vertex_streams(context, mem, instance_count, max_index);
+
+    {
+        // DEBUG BUILD ONLY: remember this draw, and mark it on the GPU when checkpoints are available
+        crash_diag::Crumb crumb;
+        crumb.frame = context.frame_timestamp;
+        crumb.vert_hash = crash_diag::short_hash(context.record.vertex_program.get(mem)->renderer_data->hash);
+        crumb.frag_hash = crash_diag::short_hash(gxm_fragment_program.renderer_data->hash);
+        crumb.color_format = static_cast<uint32_t>(context.record.color_surface.colorFormat);
+        crumb.primitive = static_cast<uint32_t>(type);
+        crumb.index_count = static_cast<uint32_t>(count);
+        crumb.instance_count = instance_count;
+        crumb.flags = (maskupdate ? crash_diag::CRUMB_MASKUPDATE : 0)
+            | (uses_interlock ? crash_diag::CRUMB_INTERLOCK : 0)
+            | (masked_fetch ? crash_diag::CRUMB_MASKED_FETCH : 0)
+            | (ordered_fetch ? crash_diag::CRUMB_ORDERED_FETCH : 0)
+            | ((context.record.front_side_fragment_program_mode == SCE_GXM_FRAGMENT_PROGRAM_DISABLED) ? crash_diag::CRUMB_FRAGMENT_DISABLED : 0);
+        const uint64_t seq = crash_diag::record(crumb);
+        if (crash_diag::use_checkpoints)
+            context.render_cmd.setCheckpointNV(reinterpret_cast<const void *>(seq));
+    }
 
     if (ordered_fetch) {
         if (ordered_indices) {
